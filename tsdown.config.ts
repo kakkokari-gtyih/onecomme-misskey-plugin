@@ -6,8 +6,9 @@ const packageJson = JSON.parse(readFileSync('./package.json', 'utf-8'));
 
 export default defineConfig({
     entry: 'src/plugin.ts',
-    dts: {
-        sourcemap: false,
+    dts: false,
+    deps: {
+        onlyBundle: false,
     },
     sourcemap: false,
     minify: true,

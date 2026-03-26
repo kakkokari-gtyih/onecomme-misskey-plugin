@@ -8,8 +8,7 @@
     ".": {
       "default": "./dist/plugin.js",
       "import": "./dist/plugin.mjs",
-      "require": "./dist/plugin.js",
-      "types": "./dist/plugin.d.mts"
+      "require": "./dist/plugin.js"
     }
   },
   "scripts": {
