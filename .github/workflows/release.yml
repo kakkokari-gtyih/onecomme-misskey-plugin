@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      ASSET_NAME: onecomme-misskey-plugin.zip
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # プラグイン・設定画面に埋め込まれるバージョン（ルートの package.json）をタグに合わせる
+      - name: Set version from tag
+        run: |
+          if [[ ! "$TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::タグ「$TAG」がバージョン番号の形式（例: v1.2.3）ではありません"
+            exit 1
+          fi
+          npm pkg set "version=${TAG#v}"
+          echo "version: $(node -p 'require("./package.json").version')"
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+
+      - run: pnpm build
+
+      - name: Create zip
+        working-directory: dist
+        run: zip -r "../$ASSET_NAME" .
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "$ASSET_NAME" --clobber --repo "$GITHUB_REPOSITORY"
