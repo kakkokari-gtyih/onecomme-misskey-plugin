@@ -7,6 +7,11 @@
             <span class="note">Misskeyのロールのアイコンを、わんコメのコメントのバッジとして表示します。</span>
         </div>
 
+        <div class="mt-4">
+            <ToggleSwitch v-model="includeReplies">返信を含める</ToggleSwitch>
+            <span class="note">チャンネル内のノートへの返信も、コメント一覧に追加します。</span>
+        </div>
+
         <div class="mt-5 flex justify-end">
             <button type="button" class="btn-primary" :disabled="saving" @click="save">保存</button>
         </div>
@@ -33,10 +38,12 @@ const { show } = useToast();
 
 // 編集中の値（保存するまでプラグインには反映しない）
 const showRoleBadges = ref(false);
+const includeReplies = ref(false);
 
 // 保存済みの値が変わったときだけ同期する（他のセクションの保存で編集中の値が上書きされないように）
-watch(() => props.state.display.showRoleBadges, (value) => {
-    showRoleBadges.value = value;
+watch(() => [props.state.display.showRoleBadges, props.state.display.includeReplies] as const, ([roleBadges, replies]) => {
+    showRoleBadges.value = roleBadges;
+    includeReplies.value = replies;
 }, { immediate: true });
 
 const saving = ref(false);
@@ -46,6 +53,7 @@ async function save() {
     try {
         emit('update:state', await postApi('display', {
             showRoleBadges: showRoleBadges.value,
+            includeReplies: includeReplies.value,
         }));
         show('保存しました');
     } catch (err) {

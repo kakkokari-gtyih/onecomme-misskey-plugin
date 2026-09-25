@@ -4,8 +4,8 @@ import type { PluginRequest } from '@onecomme.com/onesdk/types/Plugin';
 import type { Service } from '@onecomme.com/onesdk/types/Service';
 import type StoreType from 'electron-store';
 
-import { PLUGIN_UID } from '@onecomme-misskey/shared';
-import type { CaptureStatus, MisskeyUser, PluginGetActions, PluginPostActions, PublicState } from '@onecomme-misskey/shared';
+import { DISPLAY_SETTING_KEYS, PLUGIN_UID } from '@onecomme-misskey/shared';
+import type { CaptureStatus, DisplaySettings, MisskeyUser, PluginGetActions, PluginPostActions, PublicState } from '@onecomme-misskey/shared';
 
 import { defineOnecommePlugin } from '@/def.js';
 import type { OnecommePlugin } from '@/def.js';
@@ -32,6 +32,7 @@ const defaultState = {
     onecommeServiceId: null as string | null,
     //#region 表示設定・defaults は浅くマージされるため、設定はフラットなキーで持つこと
     showRoleBadges: false,
+    includeReplies: false,
     //#endregion
 };
 
@@ -105,7 +106,8 @@ export default defineOnecommePlugin(() => {
             captureStatus: getCaptureStatus(),
             display: {
                 showRoleBadges: s.get('showRoleBadges'),
-            },
+                includeReplies: s.get('includeReplies'),
+            } satisfies DisplaySettings,
         };
     }
 
@@ -149,6 +151,7 @@ export default defineOnecommePlugin(() => {
         const serviceId = s.get('onecommeServiceId');
         // 切断処理と行き違いで届いたノートは捨てる
         if (serviceId == null || !isTargetServiceEnabled()) return;
+        if (note.replyId != null && !s.get('includeReplies')) return;
 
         const body = noteToComment(note, {
             serviceId,
@@ -364,9 +367,16 @@ export default defineOnecommePlugin(() => {
 
         display: async (body) => {
             const s = getStore();
-            if ('showRoleBadges' in body) {
-                if (typeof body['showRoleBadges'] !== 'boolean') throw new HttpError(400, 'showRoleBadges の指定が正しくありません');
-                s.set('showRoleBadges', body['showRoleBadges']);
+            // 先にすべて検証してから保存する
+            const updates: Partial<DisplaySettings> = {};
+            for (const key of DISPLAY_SETTING_KEYS) {
+                if (!(key in body)) continue;
+                const value = body[key];
+                if (typeof value !== 'boolean') throw new HttpError(400, `${key} の指定が正しくありません`);
+                updates[key] = value;
+            }
+            for (const [key, value] of Object.entries(updates) as [keyof DisplaySettings, boolean][]) {
+                s.set(key, value);
             }
             return getPublicState();
         },

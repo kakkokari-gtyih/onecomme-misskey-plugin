@@ -18,7 +18,12 @@ export type CaptureStatus = 'disabled' | 'serviceDisconnected' | 'connecting' | 
 export type DisplaySettings = {
     /** ロールバッジを表示する */
     showRoleBadges: boolean;
+    /** 返信を含める */
+    includeReplies: boolean;
 };
+
+/** 表示設定の項目（すべて boolean） */
+export const DISPLAY_SETTING_KEYS = ['showRoleBadges', 'includeReplies'] as const satisfies readonly (keyof DisplaySettings)[];
 
 /** 設定画面に返す状態 */
 export type PublicState = {
