@@ -5,7 +5,7 @@
             <input v-model="host" type="text" class="input" placeholder="misskey.io" autocomplete="url" required>
         </label>
         <button type="submit" class="btn-primary mt-3" :disabled="starting || pending">Misskeyでログイン</button>
-        <p class="note">MiAuthでログインします。要求する権限は「アカウントの情報を見る」「チャンネルを見る」のみです。</p>
+        <p class="note">MiAuthでログインします。</p>
 
         <div v-if="pending" class="mt-3">
             <p class="mb-2 text-xs font-bold text-accent">
