@@ -6,6 +6,9 @@
             <ToggleSwitch v-model="enableCapture">チャンネルのノートをコメント一覧に流す</ToggleSwitch>
             <StatusBadge :status="state.captureStatus" />
         </div>
+        <p v-if="state.captureStatus === 'serviceDisconnected'" class="mt-2 text-xs text-danger">
+            わんコメで「{{ serviceName }}」枠の「接続」がオフになっています。オンにするとコメントの追加が始まります。
+        </p>
 
         <label class="mt-4 block">
             <span class="field-label">わんコメの枠</span>
@@ -29,7 +32,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import type { ChannelSummary, PublicState, ServiceSummary } from '@onecomme-misskey/shared';
 
 import { getApi, getErrorMessage, postApi } from '@/api.js';
@@ -54,17 +57,18 @@ const enableCapture = ref(false);
 const serviceId = ref<string | null>(null);
 const channelId = ref<string | null>(null);
 
-// state が差し替わったとき（保存時・ログイン状態の変化時）だけ同期する。
-// 接続状態のポーリングは同じオブジェクトを書き換えるだけなので、編集中の値は上書きされない
-watch(() => props.state, (state) => {
-    enableCapture.value = state.enableCapture;
-    serviceId.value = state.onecommeServiceId;
-    channelId.value = state.captureChannelId;
+// 保存済みの値が変わったときだけ同期する（他のセクションの保存で編集中の値が上書きされないように）
+watch(() => [props.state.enableCapture, props.state.onecommeServiceId, props.state.captureChannelId] as const, ([enabled, service, channel]) => {
+    enableCapture.value = enabled;
+    serviceId.value = service;
+    channelId.value = channel;
 }, { immediate: true });
 
 const services = ref<ServiceSummary[]>([]);
 const channels = ref<ChannelSummary[] | null>(null);
 const saving = ref(false);
+
+const serviceName = computed(() => services.value.find((s) => s.id === props.state.onecommeServiceId)?.name ?? '');
 
 async function loadServices() {
     try {

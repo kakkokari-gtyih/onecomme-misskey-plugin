@@ -12,7 +12,13 @@ export type MisskeyUser = {
     avatarUrl: string | null;
 };
 
-export type CaptureStatus = 'disabled' | 'connecting' | 'connected' | 'reconnecting';
+export type CaptureStatus = 'disabled' | 'serviceDisconnected' | 'connecting' | 'connected' | 'reconnecting';
+
+/** 表示設定 */
+export type DisplaySettings = {
+    /** ロールバッジを表示する */
+    showRoleBadges: boolean;
+};
 
 /** 設定画面に返す状態 */
 export type PublicState = {
@@ -26,6 +32,7 @@ export type PublicState = {
     captureChannelName: string | null;
     onecommeServiceId: string | null;
     captureStatus: CaptureStatus;
+    display: DisplaySettings;
 };
 
 export type ChannelSummary = {
@@ -63,6 +70,7 @@ export type PluginPostActions = {
     'miauth/cancel': { body: Record<string, never>; response: PublicState };
     logout: { body: Record<string, never>; response: PublicState };
     settings: { body: SettingsUpdate; response: PublicState };
+    display: { body: Partial<DisplaySettings>; response: PublicState };
 };
 
 export type PluginErrorResponse = {

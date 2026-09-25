@@ -12,6 +12,7 @@ const props = defineProps<{
 
 const STATUS = {
     disabled: { label: '停止中', class: 'border-line text-muted' },
+    serviceDisconnected: { label: '枠が未接続', class: 'border-danger text-danger' },
     connecting: { label: '接続中…', class: 'border-warning text-warning' },
     connected: { label: '接続済み', class: 'border-accent text-accent' },
     reconnecting: { label: '再接続中…', class: 'border-warning text-warning' },

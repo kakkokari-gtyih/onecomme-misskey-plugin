@@ -33,8 +33,9 @@ export async function getServices(): Promise<Service[]> {
 
 export async function createService(name: string): Promise<Service> {
     // `POST /api/services` は `id` が必須（指定したIDでそのまま枠が作成される）
+    // 連携を有効にした操作で作成されるため、「接続」はオンの状態で作成する
     const id = randomUUID();
-    const created = await request<Service | null>('/services', { method: 'POST', body: { id, name } });
+    const created = await request<Service | null>('/services', { method: 'POST', body: { id, name, enabled: true } });
     if (created == null || created.id !== id) {
         throw new Error('わんコメの枠を作成できませんでした');
     }

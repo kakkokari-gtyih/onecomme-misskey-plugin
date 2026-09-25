@@ -21,7 +21,10 @@
             />
         </section>
 
-        <CaptureSettings v-if="state?.loggedIn" :state="state" @update:state="replace" />
+        <template v-if="state?.loggedIn">
+            <CaptureSettings :state="state" @update:state="replace" />
+            <DisplaySettings :state="state" @update:state="replace" />
+        </template>
     </main>
 
     <AppToast />
@@ -34,6 +37,7 @@ import { getErrorMessage, postApi } from '@/api.js';
 import AccountCard from '@/components/AccountCard.vue';
 import AppToast from '@/components/AppToast.vue';
 import CaptureSettings from '@/components/CaptureSettings.vue';
+import DisplaySettings from '@/components/DisplaySettings.vue';
 import LoginForm from '@/components/LoginForm.vue';
 import { usePluginState } from '@/composables/usePluginState.js';
 import { useToast } from '@/composables/useToast.js';

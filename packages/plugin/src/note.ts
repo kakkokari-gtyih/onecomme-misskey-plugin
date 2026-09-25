@@ -114,6 +114,7 @@ export function noteToComment(note: entities.Note, ctx: {
     serviceId: string;
     myUserId: string | null;
     resolveEmoji: EmojiResolver;
+    showRoleBadges: boolean;
 }): SendCommentRequest | null {
     // CWが設定されている場合は、本文ではなくCWの注釈のみを表示する
     const source = note.cw ?? note.text;
@@ -139,9 +140,11 @@ export function noteToComment(note: entities.Note, ctx: {
             screenName: acct,
             displayName,
             profileImage: note.user.avatarUrl,
-            badges: (note.user.badgeRoles ?? [])
-                .filter((role) => role.iconUrl != null)
-                .map((role) => ({ url: role.iconUrl!, label: role.name })),
+            badges: ctx.showRoleBadges
+                ? (note.user.badgeRoles ?? [])
+                    .filter((role) => role.iconUrl != null)
+                    .map((role) => ({ url: role.iconUrl!, label: role.name }))
+                : [],
             isOwner: ctx.myUserId != null && note.userId === ctx.myUserId,
             hasGift: false,
             comment: rendered.html,

@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { entities } from 'misskey-js';
 import type { PluginRequest } from '@onecomme.com/onesdk/types/Plugin';
+import type { Service } from '@onecomme.com/onesdk/types/Service';
 import type StoreType from 'electron-store';
 
 import { PLUGIN_UID } from '@onecomme-misskey/shared';
-import type { MisskeyUser, PluginGetActions, PluginPostActions, PublicState } from '@onecomme-misskey/shared';
+import type { CaptureStatus, MisskeyUser, PluginGetActions, PluginPostActions, PublicState } from '@onecomme-misskey/shared';
 
 import { defineOnecommePlugin } from '@/def.js';
 import type { OnecommePlugin } from '@/def.js';
@@ -29,6 +30,9 @@ const defaultState = {
     captureChannelName: null as string | null,
     /** コメントを流す わんコメの枠のID */
     onecommeServiceId: null as string | null,
+    //#region 表示設定・defaults は浅くマージされるため、設定はフラットなキーで持つこと
+    showRoleBadges: false,
+    //#endregion
 };
 
 type State = typeof defaultState;
@@ -75,6 +79,10 @@ function getString(body: Record<string, unknown>, key: string): string {
 export default defineOnecommePlugin(() => {
     let store: StoreType<State> | null = null;
     let capture: ChannelCapture | null = null;
+    /** 現在の接続先（設定が変わったときだけ張り直すため） */
+    let captureKey: string | null = null;
+    /** わんコメの枠ごとの「接続」スイッチの状態 */
+    const serviceEnabled = new Map<string, boolean>();
     /** 進行中のMiAuthセッション */
     let pendingMiAuth: { origin: string; session: string; timer: ReturnType<typeof setInterval> } | null = null;
 
@@ -94,8 +102,30 @@ export default defineOnecommePlugin(() => {
             captureChannelId: s.get('captureChannelId'),
             captureChannelName: s.get('captureChannelName'),
             onecommeServiceId: s.get('onecommeServiceId'),
-            captureStatus: capture?.status ?? 'disabled',
+            captureStatus: getCaptureStatus(),
+            display: {
+                showRoleBadges: s.get('showRoleBadges'),
+            },
         };
+    }
+
+    function getCaptureStatus(): CaptureStatus {
+        if (!getStore().get('enableCapture')) return 'disabled';
+        if (!isTargetServiceEnabled()) return 'serviceDisconnected';
+        return capture?.status ?? 'disabled';
+    }
+
+    /** コメントを流す枠の「接続」がオンになっているか */
+    function isTargetServiceEnabled(): boolean {
+        const serviceId = getStore().get('onecommeServiceId');
+        return serviceId != null && serviceEnabled.get(serviceId) === true;
+    }
+
+    function updateServices(services: Service[]) {
+        serviceEnabled.clear();
+        for (const service of services) {
+            serviceEnabled.set(service.id, service.enabled);
+        }
     }
 
     /** 保存されている枠が存在しなければ、新しく「Misskey」枠を作成する */
@@ -103,10 +133,12 @@ export default defineOnecommePlugin(() => {
         const s = getStore();
         const serviceId = s.get('onecommeServiceId');
         const services = await getServices();
+        updateServices(services);
         if (serviceId != null && services.some((service) => service.id === serviceId)) {
             return serviceId;
         }
         const created = await createService(DEFAULT_SERVICE_NAME);
+        serviceEnabled.set(created.id, created.enabled);
         s.set('onecommeServiceId', created.id);
         console.info(`[onecomme] created service "${created.name}" (${created.id})`);
         return created.id;
@@ -114,12 +146,15 @@ export default defineOnecommePlugin(() => {
 
     async function handleNote(note: entities.Note, source: ChannelCapture) {
         const s = getStore();
-        const serviceId = s.get('onecommeServiceId') ?? await ensureService();
+        const serviceId = s.get('onecommeServiceId');
+        // 切断処理と行き違いで届いたノートは捨てる
+        if (serviceId == null || !isTargetServiceEnabled()) return;
 
         const body = noteToComment(note, {
             serviceId,
             myUserId: s.get('misskeyUser')?.id ?? null,
             resolveEmoji: (name, host, remoteEmojis) => source.resolveEmoji(name, host, remoteEmojis),
+            showRoleBadges: s.get('showRoleBadges'),
         });
         if (body == null) return;
 
@@ -191,16 +226,26 @@ export default defineOnecommePlugin(() => {
         applyCapture();
     }
 
-    /** 現在の設定に合わせてストリーミング接続を張り直す */
+    /**
+     * 現在の設定に合わせてストリーミング接続を張る・切る。
+     * わんコメ側で枠の「接続」がオフの間は、Misskeyへの接続自体を切っておく。
+     */
     function applyCapture() {
-        capture?.stop();
-        capture = null;
-
         const s = getStore();
         const origin = s.get('misskeyHost');
         const token = s.get('misskeyToken');
         const channelId = s.get('captureChannelId');
-        if (!s.get('enableCapture') || origin == null || token == null || channelId == null) return;
+        const shouldConnect = s.get('enableCapture') && isTargetServiceEnabled()
+            && origin != null && token != null && channelId != null;
+        const key = shouldConnect ? JSON.stringify([origin, token, channelId]) : null;
+
+        // 接続先が変わっていなければ張り直さない
+        if (key === captureKey) return;
+
+        capture?.stop();
+        capture = null;
+        captureKey = key;
+        if (!shouldConnect) return;
 
         const newCapture: ChannelCapture = new ChannelCapture({
             origin,
@@ -316,6 +361,15 @@ export default defineOnecommePlugin(() => {
             applyCapture();
             return getPublicState();
         },
+
+        display: async (body) => {
+            const s = getStore();
+            if ('showRoleBadges' in body) {
+                if (typeof body['showRoleBadges'] !== 'boolean') throw new HttpError(400, 'showRoleBadges の指定が正しくありません');
+                s.set('showRoleBadges', body['showRoleBadges']);
+            }
+            return getPublicState();
+        },
     };
 
     function isHandlerKey<T extends object>(handlers: T, key: unknown): key is keyof T {
@@ -344,12 +398,19 @@ export default defineOnecommePlugin(() => {
         version: _VERSION_,
         author: 'kakkokari-gtyih',
         url: SETTINGS_PAGE_URL,
-        permissions: [],
+        permissions: ['services'],
         defaultState,
         //#endregion
 
-        init: (api) => {
+        init: (api, initialData) => {
             store = api.store;
+            updateServices(initialData.services ?? []);
+            applyCapture();
+        },
+
+        subscribe: (type, ...args) => {
+            if (type !== 'services' || store == null) return;
+            updateServices(args[0] as Service[]);
             applyCapture();
         },
 
@@ -379,6 +440,7 @@ export default defineOnecommePlugin(() => {
             cancelMiAuth();
             capture?.stop();
             capture = null;
+            captureKey = null;
         },
     };
 
