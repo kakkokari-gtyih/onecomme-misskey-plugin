@@ -30,8 +30,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-    started: [];
-    cancel: [];
+    (ev: 'started'): void;
+    (ev: 'cancel'): void;
 }>();
 
 const { show } = useToast();

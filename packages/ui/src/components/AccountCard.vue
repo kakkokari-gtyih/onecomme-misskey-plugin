@@ -25,7 +25,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-    logout: [];
+    (ev: 'logout'): void;
 }>();
 
 const acct = computed(() => `@${props.user.username}@${new URL(props.origin).host}`);

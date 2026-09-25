@@ -31,7 +31,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-    'update:state': [state: PublicState];
+    (ev: 'update:state', state: PublicState): void;
 }>();
 
 const { show } = useToast();
