@@ -1,2 +1,2 @@
 allowBuilds:
-  '@onecomme.com/onesdk': true
+  '@onecomme.com/onesdk': false

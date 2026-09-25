@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Misskey連携プラグイン 設定</title>
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+    <main class="container">
+        <h1 class="title">Misskey連携プラグイン</h1>
+
+        <section class="card">
+            <h2 class="card-title">Misskeyアカウント</h2>
+
+            <div id="account-loading" class="muted">読み込み中…</div>
+
+            <div id="account-info" class="account" hidden>
+                <img id="account-avatar" class="avatar" alt="">
+                <div class="account-body">
+                    <div id="account-name" class="account-name"></div>
+                    <div id="account-acct" class="muted"></div>
+                </div>
+                <button id="logout-button" type="button" class="button">ログアウト</button>
+            </div>
+
+            <form id="login-form" class="login-form" hidden>
+                <label class="field">
+                    <span class="field-label">サーバーのURL</span>
+                    <input id="login-host" type="text" placeholder="misskey.io" autocomplete="url" required>
+                </label>
+                <button type="submit" class="button primary">Misskeyでログイン</button>
+                <p class="note">MiAuthでログインします。要求する権限は「アカウントの情報を見る」「チャンネルを見る」のみです。</p>
+                <div id="login-waiting" class="waiting" hidden>
+                    <p class="note">別のタブでMisskeyのログインを許可してください。許可すると自動でこの画面に反映されます（「アプリケーションに戻って」と表示されたら、そのタブは閉じて構いません）。</p>
+                    <button id="login-cancel" type="button" class="button small">キャンセル</button>
+                </div>
+            </form>
+        </section>
+
+        <section id="capture-section" class="card" hidden>
+            <h2 class="card-title">コメント連携</h2>
+
+            <div class="row">
+                <label class="switch">
+                    <input id="enable-capture" type="checkbox">
+                    <span class="switch-track"><span class="switch-thumb"></span></span>
+                    <span>チャンネルのノートをコメント一覧に流す</span>
+                </label>
+                <span id="capture-status" class="status"></span>
+            </div>
+
+            <label class="field">
+                <span class="field-label">わんコメの枠</span>
+                <select id="service-select"></select>
+                <span class="note">ノートはこの枠のコメントとして追加されます。枠ごとの読み上げや色の設定が適用されます。</span>
+            </label>
+
+            <div class="field">
+                <div class="field-label-row">
+                    <span class="field-label">チャンネル</span>
+                    <button id="reload-channels" type="button" class="button small">再読み込み</button>
+                </div>
+                <span class="note">Misskeyでお気に入りに登録したチャンネルが表示されます。</span>
+                <div id="channel-list" class="channel-list" role="radiogroup" aria-label="チャンネル"></div>
+            </div>
+
+            <div class="actions">
+                <button id="save-button" type="button" class="button primary">保存</button>
+            </div>
+        </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <script src="./common.js"></script>
+    <script src="./index.js"></script>
+</body>
+</html>

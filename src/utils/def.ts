@@ -1,4 +1,4 @@
-import type { OnePlugin } from '@onecomme.com/onesdk/types/Plugin';
+import type { OnePlugin, PluginRequest } from '@onecomme.com/onesdk/types/Plugin';
 import type { ConnectedData } from '@onecomme.com/onesdk/types/ApiOptions';
 import type StoreType from 'electron-store';
 
@@ -7,13 +7,18 @@ type RemoveIndexSignature<T> = {
 };
 
 /** defaultStateの型をelectron store側で使うための拡張 */
-export interface OnecommePlugin<T extends Record<string, any>> extends Omit<RemoveIndexSignature<OnePlugin>, 'init'> {
+export interface OnecommePlugin<T extends Record<string, any>> extends Omit<RemoveIndexSignature<OnePlugin>, 'init' | 'request'> {
     defaultState: T;
     init?: (api: {
         dir: string;
         filepath: string;
         store: StoreType<T>;
     }, initialData: ConnectedData) => void;
+    /** レスポンスはJSONとしてシリアライズされる */
+    request?: (req: PluginRequest) => Promise<{
+        code: number;
+        response: unknown;
+    }>;
 }
 
 export function defineOnecommePlugin<T extends Record<string, any>>(plugin: OnecommePlugin<T> | (() => OnecommePlugin<T>)): OnecommePlugin<T> {
