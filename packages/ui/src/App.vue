@@ -1,6 +1,9 @@
 <template>
     <main class="mx-auto max-w-160 px-4 pt-6 pb-12">
-        <h1 class="text-xl font-bold mb-4">Misskey連携プラグイン</h1>
+        <div class="flex items-center mb-4">
+            <h1 class="text-xl font-bold">Misskey連携プラグイン</h1>
+            <div class="ml-auto text-sm">v{{ version }}</div>
+        </div>
 
         <section class="card">
             <h2 class="card-title">Misskeyアカウント</h2>
@@ -44,6 +47,7 @@ import { useToast } from '@/composables/useToast.js';
 
 const { state, loadError, replace } = usePluginState();
 const { show } = useToast();
+const version = _VERSION_;
 
 /** ユーザー操作によるキャンセルかどうか（タイムアウトと区別するため） */
 let cancelledByUser = false;
