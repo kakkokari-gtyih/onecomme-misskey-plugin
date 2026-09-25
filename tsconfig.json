@@ -40,7 +40,6 @@
     "moduleDetection": "force",
     "skipLibCheck": true,
 
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
     },
