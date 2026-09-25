@@ -22,7 +22,7 @@
                 <button type="button" class="btn btn-sm" @click="loadChannels">再読み込み</button>
             </div>
             <span class="note">Misskeyでお気に入りに登録したチャンネルが表示されます。</span>
-            <ChannelList v-model="channelId" :channels="channels" :savedChannelName="state.captureChannelName" />
+            <ChannelList v-model="channelId" :host="state.misskeyHost" :channels="channels" :savedChannelName="state.captureChannelName" />
         </div>
 
         <div class="mt-5 flex justify-end">

@@ -15,8 +15,16 @@
                 <div v-if="model === channel.id" class="h-2.5 w-2.5 rounded-full bg-accent"></div>
             </div>
             <div class="min-w-0 flex-1">
-                <div class="block truncate font-bold">{{ channel.name }}<template v-if="channel.isArchived">（アーカイブ済み）</template></div>
-                <div class="block truncate text-xs text-muted">{{ channel.description }}</div>
+                <div class="truncate font-bold">{{ channel.name }}<template v-if="channel.isArchived">（アーカイブ済み）</template></div>
+                <div class="truncate text-xs text-muted">{{ channel.description }}</div>
+            </div>
+            <div class="shrink-0">
+                <a :href="`${host}/channels/${channel.id}`" target="_blank" rel="noopener noreferrer" class="block w-8 h-8 p-2.5 rounded-full hover:bg-accent/20">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="block w-3 h-3" viewBox="0 0 16 16">
+                        <path fill-rule="evenodd" d="M8.636 3.5a.5.5 0 0 0-.5-.5H1.5A1.5 1.5 0 0 0 0 4.5v10A1.5 1.5 0 0 0 1.5 16h10a1.5 1.5 0 0 0 1.5-1.5V7.864a.5.5 0 0 0-1 0V14.5a.5.5 0 0 1-.5.5h-10a.5.5 0 0 1-.5-.5v-10a.5.5 0 0 1 .5-.5h6.636a.5.5 0 0 0 .5-.5"/>
+                        <path fill-rule="evenodd" d="M16 .5a.5.5 0 0 0-.5-.5h-5a.5.5 0 0 0 0 1h3.793L6.146 9.146a.5.5 0 1 0 .708.708L15 1.707V5.5a.5.5 0 0 0 1 0z"/>
+                    </svg>
+                </a>
             </div>
         </label>
     </div>
@@ -27,6 +35,8 @@ import { computed } from 'vue';
 import type { ChannelSummary } from '@onecomme-misskey/shared';
 
 const props = defineProps<{
+    /** null は読み込み中 */
+    host: string | null;
     /** null は読み込み中 */
     channels: ChannelSummary[] | null;
     /** 保存済みのチャンネル名（お気に入りから外れている場合の表示用） */
