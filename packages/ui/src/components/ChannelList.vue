@@ -7,20 +7,17 @@
         <label
             v-for="channel in items"
             :key="channel.id"
-            class="flex cursor-pointer items-center gap-3 rounded-lg border p-2"
+            class="flex cursor-pointer items-center gap-3 rounded-lg border p-2 hover:bg-accent/5"
             :class="model === channel.id ? 'border-accent ring-1 ring-accent ring-inset' : 'border-line'"
         >
-            <input v-model="model" type="radio" name="channel" :value="channel.id" class="m-0 shrink-0 accent-accent">
-            <span
-                class="h-9 w-16 shrink-0 overflow-hidden rounded-md border-l-4 bg-line"
-                :style="{ borderLeftColor: channel.color }"
-            >
-                <img v-if="channel.bannerUrl != null" :src="channel.bannerUrl" alt="" class="size-full object-cover">
-            </span>
-            <span class="min-w-0 flex-1">
-                <span class="block truncate font-bold">{{ channel.name }}<template v-if="channel.isArchived">（アーカイブ済み）</template></span>
-                <span class="block truncate text-xs text-muted">{{ channel.description }}</span>
-            </span>
+            <input v-model="model" type="radio" name="channel" :value="channel.id" class="sr-only">
+            <div class="flex h-5 w-5 p-[3px] shrink-0 border-2 border-line rounded-full">
+                <div v-if="model === channel.id" class="h-2.5 w-2.5 rounded-full bg-accent"></div>
+            </div>
+            <div class="min-w-0 flex-1">
+                <div class="block truncate font-bold">{{ channel.name }}<template v-if="channel.isArchived">（アーカイブ済み）</template></div>
+                <div class="block truncate text-xs text-muted">{{ channel.description }}</div>
+            </div>
         </label>
     </div>
 </template>
