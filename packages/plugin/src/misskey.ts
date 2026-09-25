@@ -2,6 +2,8 @@ import { Stream, api } from 'misskey-js';
 import type { entities, IChannelConnection, Channels } from 'misskey-js';
 import WebSocket from 'ws';
 
+import type { CaptureStatus as PublicCaptureStatus } from '@onecomme-misskey/shared';
+
 /**
  * MiAuthで要求する権限
  * - read:account: ストリーミングへの接続に必要
@@ -58,7 +60,7 @@ export function createApiClient(origin: string, token: string | null) {
     return new api.APIClient({ origin, credential: token });
 }
 
-export type CaptureStatus = 'connecting' | 'connected' | 'reconnecting';
+export type CaptureStatus = Exclude<PublicCaptureStatus, 'disabled'>;
 
 /** `/emoji/` ルートが受け付ける名前（Misskey backend の ServerService を参照） */
 const EMOJI_ROUTE_SAFE = /^[a-zA-Z0-9\-_.]+$/;

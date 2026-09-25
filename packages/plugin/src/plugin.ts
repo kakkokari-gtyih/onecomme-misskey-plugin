@@ -3,27 +3,22 @@ import type { entities } from 'misskey-js';
 import type { PluginRequest } from '@onecomme.com/onesdk/types/Plugin';
 import type StoreType from 'electron-store';
 
-import { defineOnecommePlugin } from '@/utils/def.js';
-import type { OnecommePlugin } from '@/utils/def.js';
-import { ChannelCapture, buildMiAuthUrl, checkMiAuth, createApiClient, normalizeOrigin } from '@/utils/misskey.js';
-import type { CaptureStatus } from '@/utils/misskey.js';
-import { noteToComment } from '@/utils/note.js';
-import { createService, getServices, sendComment } from '@/utils/onecomme.js';
+import { PLUGIN_UID } from '@onecomme-misskey/shared';
+import type { MisskeyUser, PluginGetActions, PluginPostActions, PublicState } from '@onecomme-misskey/shared';
 
-const PLUGIN_UID = 'net.misskey-hub.onecomme';
-const SETTINGS_PAGE_URL = `http://localhost:11180/plugins/${PLUGIN_UID}/assets/index.html`;
+import { defineOnecommePlugin } from '@/def.js';
+import type { OnecommePlugin } from '@/def.js';
+import { ChannelCapture, buildMiAuthUrl, checkMiAuth, createApiClient, normalizeOrigin } from '@/misskey.js';
+import { noteToComment } from '@/note.js';
+import { createService, getServices, sendComment } from '@/onecomme.js';
+
+/** 設定画面（Viteでビルドした `dist/ui`） */
+const SETTINGS_PAGE_URL = `http://localhost:11180/plugins/${PLUGIN_UID}/ui/index.html`;
 const MIAUTH_APP_NAME = 'わんコメ Misskey連携';
 const DEFAULT_SERVICE_NAME = 'Misskey';
 /** MiAuthの認可を確認する間隔と、諦めるまでの時間 */
 const MIAUTH_CHECK_INTERVAL = 2000;
 const MIAUTH_TIMEOUT = 10 * 60 * 1000;
-
-type MisskeyUser = {
-    id: string;
-    username: string;
-    name: string | null;
-    avatarUrl: string | null;
-};
 
 const defaultState = {
     misskeyHost: null as string | null,
@@ -38,18 +33,13 @@ const defaultState = {
 
 type State = typeof defaultState;
 
-/** 設定画面に返す状態 */
-type PublicState = {
-    loggedIn: boolean;
-    /** MiAuthの認可待ち */
-    miauthPending: boolean;
-    misskeyHost: string | null;
-    misskeyUser: MisskeyUser | null;
-    enableCapture: boolean;
-    captureChannelId: string | null;
-    captureChannelName: string | null;
-    onecommeServiceId: string | null;
-    captureStatus: CaptureStatus | 'disabled';
+type GetHandlers = {
+    [K in keyof PluginGetActions]: (params: PluginRequest['params']) => Promise<PluginGetActions[K]['response']>;
+};
+
+/** POSTのbodyはプラグイン側で検証するため、ハンドラーには未検証の値を渡す */
+type PostHandlers = {
+    [K in keyof PluginPostActions]: (body: Record<string, unknown>) => Promise<PluginPostActions[K]['response']>;
 };
 
 class HttpError extends Error {
@@ -222,124 +212,129 @@ export default defineOnecommePlugin(() => {
         capture = newCapture;
     }
 
-    async function handleGet(req: PluginRequest): Promise<unknown> {
+    function getCredential(): { origin: string; token: string } {
         const s = getStore();
-        switch (req.params['action']) {
-            case undefined:
-            case 'state': {
-                return getPublicState();
+        const origin = s.get('misskeyHost');
+        const token = s.get('misskeyToken');
+        if (origin == null || token == null) throw new HttpError(401, 'Misskeyにログインしていません');
+        return { origin, token };
+    }
+
+    const getHandlers: GetHandlers = {
+        state: async () => getPublicState(),
+
+        channels: async () => {
+            const { origin, token } = getCredential();
+            const channels = await createApiClient(origin, token).request('channels/my-favorites', {});
+            return channels.map((channel) => ({
+                id: channel.id,
+                name: channel.name,
+                description: channel.description,
+                bannerUrl: channel.bannerUrl,
+                color: channel.color,
+                isArchived: channel.isArchived,
+                notesCount: channel.notesCount,
+                usersCount: channel.usersCount,
+            }));
+        },
+
+        services: async () => {
+            const services = await getServices();
+            return services.map((service) => ({ id: service.id, name: service.name }));
+        },
+    };
+
+    const postHandlers: PostHandlers = {
+        'miauth/start': async (body) => {
+            let origin: string;
+            try {
+                origin = normalizeOrigin(getString(body, 'host'));
+            } catch (err) {
+                if (err instanceof HttpError) throw err;
+                throw new HttpError(400, 'サーバーのURLが正しくありません');
+            }
+            const session = startMiAuth(origin);
+            return {
+                url: buildMiAuthUrl({
+                    origin,
+                    session,
+                    appName: MIAUTH_APP_NAME,
+                }),
+            };
+        },
+
+        'miauth/cancel': async () => {
+            cancelMiAuth();
+            return getPublicState();
+        },
+
+        logout: async () => {
+            const s = getStore();
+            s.set('misskeyToken', null);
+            s.set('misskeyUser', null);
+            s.set('enableCapture', false);
+            applyCapture();
+            return getPublicState();
+        },
+
+        settings: async (body) => {
+            const s = getStore();
+            const { origin, token } = getCredential();
+
+            if ('onecommeServiceId' in body) {
+                const serviceId = body['onecommeServiceId'];
+                if (serviceId !== null && typeof serviceId !== 'string') throw new HttpError(400, '枠の指定が正しくありません');
+                s.set('onecommeServiceId', serviceId);
             }
 
-            case 'channels': {
-                const origin = s.get('misskeyHost');
-                const token = s.get('misskeyToken');
-                if (origin == null || token == null) throw new HttpError(401, 'Misskeyにログインしていません');
-                const channels = await createApiClient(origin, token).request('channels/my-favorites', {});
-                return channels.map((channel) => ({
-                    id: channel.id,
-                    name: channel.name,
-                    description: channel.description,
-                    bannerUrl: channel.bannerUrl,
-                    color: channel.color,
-                    isArchived: channel.isArchived,
-                    notesCount: channel.notesCount,
-                    usersCount: channel.usersCount,
-                }));
+            if ('captureChannelId' in body) {
+                const channelId = body['captureChannelId'];
+                if (channelId === null) {
+                    s.set('captureChannelId', null);
+                    s.set('captureChannelName', null);
+                } else if (typeof channelId === 'string') {
+                    const channel = await createApiClient(origin, token).request('channels/show', { channelId });
+                    s.set('captureChannelId', channel.id);
+                    s.set('captureChannelName', channel.name);
+                } else {
+                    throw new HttpError(400, 'チャンネルの指定が正しくありません');
+                }
             }
 
-            case 'services': {
-                const services = await getServices();
-                return services.map((service) => ({ id: service.id, name: service.name }));
+            if ('enableCapture' in body) {
+                s.set('enableCapture', body['enableCapture'] === true);
             }
 
-
-            default: {
-                throw new HttpError(404, '不明な操作です');
+            if (s.get('enableCapture')) {
+                if (s.get('captureChannelId') == null) {
+                    s.set('enableCapture', false);
+                    throw new HttpError(400, 'コメント一覧に流すチャンネルを選択してください');
+                }
+                await ensureService();
             }
-        }
+
+            applyCapture();
+            return getPublicState();
+        },
+    };
+
+    function isHandlerKey<T extends object>(handlers: T, key: unknown): key is keyof T {
+        return typeof key === 'string' && Object.hasOwn(handlers, key);
+    }
+
+    async function handleGet(req: PluginRequest): Promise<unknown> {
+        getStore();
+        const action = req.params['action'] ?? 'state';
+        if (!isHandlerKey(getHandlers, action)) throw new HttpError(404, '不明な操作です');
+        return getHandlers[action](req.params);
     }
 
     async function handlePost(req: PluginRequest): Promise<unknown> {
-        const s = getStore();
+        getStore();
         const body = parseBody(req.body);
-
-        switch (body['action']) {
-            case 'miauth/start': {
-                let origin: string;
-                try {
-                    origin = normalizeOrigin(getString(body, 'host'));
-                } catch (err) {
-                    if (err instanceof HttpError) throw err;
-                    throw new HttpError(400, 'サーバーのURLが正しくありません');
-                }
-                const session = startMiAuth(origin);
-                return {
-                    url: buildMiAuthUrl({
-                        origin,
-                        session,
-                        appName: MIAUTH_APP_NAME,
-                    }),
-                };
-            }
-
-            case 'miauth/cancel': {
-                cancelMiAuth();
-                return getPublicState();
-            }
-
-            case 'logout': {
-                s.set('misskeyToken', null);
-                s.set('misskeyUser', null);
-                s.set('enableCapture', false);
-                applyCapture();
-                return getPublicState();
-            }
-
-            case 'settings': {
-                const origin = s.get('misskeyHost');
-                const token = s.get('misskeyToken');
-                if (origin == null || token == null) throw new HttpError(401, 'Misskeyにログインしていません');
-
-                if ('onecommeServiceId' in body) {
-                    const serviceId = body['onecommeServiceId'];
-                    if (serviceId !== null && typeof serviceId !== 'string') throw new HttpError(400, '枠の指定が正しくありません');
-                    s.set('onecommeServiceId', serviceId);
-                }
-
-                if ('captureChannelId' in body) {
-                    const channelId = body['captureChannelId'];
-                    if (channelId === null) {
-                        s.set('captureChannelId', null);
-                        s.set('captureChannelName', null);
-                    } else if (typeof channelId === 'string') {
-                        const channel = await createApiClient(origin, token).request('channels/show', { channelId });
-                        s.set('captureChannelId', channel.id);
-                        s.set('captureChannelName', channel.name);
-                    } else {
-                        throw new HttpError(400, 'チャンネルの指定が正しくありません');
-                    }
-                }
-
-                if ('enableCapture' in body) {
-                    s.set('enableCapture', body['enableCapture'] === true);
-                }
-
-                if (s.get('enableCapture')) {
-                    if (s.get('captureChannelId') == null) {
-                        s.set('enableCapture', false);
-                        throw new HttpError(400, 'コメント一覧に流すチャンネルを選択してください');
-                    }
-                    await ensureService();
-                }
-
-                applyCapture();
-                return getPublicState();
-            }
-
-            default: {
-                throw new HttpError(404, '不明な操作です');
-            }
-        }
+        const action = body['action'];
+        if (!isHandlerKey(postHandlers, action)) throw new HttpError(404, '不明な操作です');
+        return postHandlers[action](body);
     }
 
     const plugin: OnecommePlugin<State> = {

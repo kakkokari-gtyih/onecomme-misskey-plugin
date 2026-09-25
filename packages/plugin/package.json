@@ -1,0 +1,20 @@
+{
+  "name": "@onecomme-misskey/plugin",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@onecomme-misskey/shared": "workspace:*",
+    "@onecomme.com/onesdk": "9.0.0-alpha.1",
+    "@types/node": "26.6.2",
+    "@types/ws": "8.18.1",
+    "electron-store": "11.0.2",
+    "mfm-js": "0.26.0",
+    "misskey-js": "2026.9.1",
+    "tsdown": "0.23.0",
+    "ws": "8.21.3"
+  }
+}

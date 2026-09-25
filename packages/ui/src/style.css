@@ -1,0 +1,6 @@
+body {
+    background: var(--c-canvas);
+    color: var(--c-fg);
+    font-size: 14px;
+    line-height: 1.6;
+}
