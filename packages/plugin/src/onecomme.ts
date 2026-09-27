@@ -1,5 +1,4 @@
-import { randomUUID } from 'node:crypto';
-import type { Service } from '@onecomme.com/onesdk/types/Service';
+import type { Service, ServiceMeta } from '@onecomme.com/onesdk/types/Service';
 
 import type { SendCommentRequest } from '@/types/onecomme.js';
 
@@ -31,15 +30,9 @@ export async function getServices(): Promise<Service[]> {
     return Array.isArray(services) ? services : [];
 }
 
-export async function createService(name: string): Promise<Service> {
-    // `POST /api/services` は `id` が必須（指定したIDでそのまま枠が作成される）
-    // 連携を有効にした操作で作成されるため、「接続」はオンの状態で作成する
-    const id = randomUUID();
-    const created = await request<Service | null>('/services', { method: 'POST', body: { id, name, enabled: true } });
-    if (created == null || created.id !== id) {
-        throw new Error('わんコメの枠を作成できませんでした');
-    }
-    return created;
+/** 枠の配信情報（タイトルや接続中の表示など）を更新する。既存の値にマージされる */
+export async function updateServiceMeta(serviceId: string, meta: ServiceMeta): Promise<void> {
+    await request(`/services/${encodeURIComponent(serviceId)}/meta`, { method: 'PUT', body: { type: 'external', meta } });
 }
 
 export async function sendComment(body: SendCommentRequest): Promise<void> {

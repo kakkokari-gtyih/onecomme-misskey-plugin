@@ -136,7 +136,8 @@ export function noteToComment(note: entities.Note, ctx: {
             id: ctx.serviceId,
         },
         comment: {
-            id: `misskey-${note.id}`,
+            // 同じノートを複数の枠に追加することがあるため、枠ごとに一意にする
+            id: `misskey-${ctx.serviceId}-${note.id}`,
             userId: note.userId,
             liveId: note.channelId ?? 'misskey',
             name: displayName,

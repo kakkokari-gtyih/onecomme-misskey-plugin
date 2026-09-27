@@ -12,7 +12,22 @@ export type MisskeyUser = {
     avatarUrl: string | null;
 };
 
-export type CaptureStatus = 'disabled' | 'serviceDisconnected' | 'connecting' | 'connected' | 'reconnecting';
+/**
+ * チャンネル連携の状態
+ * - off: わんコメ側で枠の「接続」がオフ
+ * - connecting / connected / reconnecting: Misskeyのストリーミングの接続状態
+ */
+export type LinkStatus = 'off' | 'connecting' | 'connected' | 'reconnecting';
+
+/** 視聴URLにMisskeyのチャンネルのURLが設定されている、わんコメの枠 */
+export type ChannelLink = {
+    serviceId: string;
+    serviceName: string;
+    channelId: string;
+    /** 取得できるまでは null */
+    channelName: string | null;
+    status: LinkStatus;
+};
 
 /** 表示設定 */
 export type DisplaySettings = {
@@ -32,41 +47,14 @@ export type PublicState = {
     miauthPending: boolean;
     misskeyHost: string | null;
     misskeyUser: MisskeyUser | null;
-    enableCapture: boolean;
-    captureChannelId: string | null;
-    captureChannelName: string | null;
-    onecommeServiceId: string | null;
-    captureStatus: CaptureStatus;
+    /** ログイン中のサーバーのチャンネルが設定されている枠 */
+    links: ChannelLink[];
     display: DisplaySettings;
-};
-
-export type ChannelSummary = {
-    id: string;
-    name: string;
-    description: string | null;
-    bannerUrl: string | null;
-    color: string;
-    isArchived: boolean;
-    notesCount: number;
-    usersCount: number;
-};
-
-export type ServiceSummary = {
-    id: string;
-    name: string;
-};
-
-export type SettingsUpdate = {
-    enableCapture?: boolean;
-    onecommeServiceId?: string | null;
-    captureChannelId?: string | null;
 };
 
 /** `GET ?action=xxx` */
 export type PluginGetActions = {
     state: { response: PublicState };
-    channels: { response: ChannelSummary[] };
-    services: { response: ServiceSummary[] };
 };
 
 /** `POST { action: 'xxx', ...body }` */
@@ -74,7 +62,6 @@ export type PluginPostActions = {
     'miauth/start': { body: { host: string }; response: { url: string } };
     'miauth/cancel': { body: Record<string, never>; response: PublicState };
     logout: { body: Record<string, never>; response: PublicState };
-    settings: { body: SettingsUpdate; response: PublicState };
     display: { body: Partial<DisplaySettings>; response: PublicState };
 };
 

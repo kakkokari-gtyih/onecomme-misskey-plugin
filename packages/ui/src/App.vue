@@ -24,8 +24,8 @@
             />
         </section>
 
-        <template v-if="state?.loggedIn">
-            <CaptureSettings :state="state" @update:state="replace" />
+        <template v-if="state?.loggedIn && state.misskeyHost != null">
+            <ChannelLinks :host="state.misskeyHost" :links="state.links" />
             <DisplaySettings :state="state" @update:state="replace" />
         </template>
     </main>
@@ -39,7 +39,7 @@ import { watch } from 'vue';
 import { getErrorMessage, postApi } from '@/api.js';
 import AccountCard from '@/components/AccountCard.vue';
 import AppToast from '@/components/AppToast.vue';
-import CaptureSettings from '@/components/CaptureSettings.vue';
+import ChannelLinks from '@/components/ChannelLinks.vue';
 import DisplaySettings from '@/components/DisplaySettings.vue';
 import LoginForm from '@/components/LoginForm.vue';
 import { usePluginState } from '@/composables/usePluginState.js';

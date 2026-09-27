@@ -6,7 +6,7 @@ import { getApi, getErrorMessage } from '@/api.js';
 const POLLING_INTERVAL = 2000;
 
 /**
- * プラグインの状態を読み込み、接続状態とログイン待ちの状態を定期的に更新する。
+ * プラグインの状態を読み込み、チャンネル連携の状態とログイン待ちの状態を定期的に更新する。
  * （編集中のフォームを上書きしないよう、ログイン状態が変わったとき以外は一部の項目のみ更新する）
  */
 export function usePluginState() {
@@ -30,7 +30,7 @@ export function usePluginState() {
             if (latest.loggedIn !== state.value.loggedIn || latest.misskeyUser?.id !== state.value.misskeyUser?.id) {
                 state.value = latest;
             } else {
-                state.value.captureStatus = latest.captureStatus;
+                state.value.links = latest.links;
                 state.value.miauthPending = latest.miauthPending;
             }
         } catch {

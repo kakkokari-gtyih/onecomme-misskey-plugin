@@ -2,14 +2,13 @@ import { Stream, api } from 'misskey-js';
 import type { entities, IChannelConnection, Channels } from 'misskey-js';
 import WebSocket from 'ws';
 
-import type { CaptureStatus as PublicCaptureStatus } from '@onecomme-misskey/shared';
+import type { LinkStatus } from '@onecomme-misskey/shared';
 
 /**
  * MiAuthで要求する権限
  * - read:account: ストリーミングへの接続に必要
- * - read:channels: お気に入りチャンネル一覧の取得に必要
  */
-export const MIAUTH_PERMISSIONS = ['read:account', 'read:channels'] as const;
+export const MIAUTH_PERMISSIONS = ['read:account'] as const;
 
 /** ユーザー入力（`misskey.io` や `https://misskey.io/` など）からoriginを得る */
 export function normalizeOrigin(input: string): string {
@@ -60,7 +59,23 @@ export function createApiClient(origin: string, token: string | null) {
     return new api.APIClient({ origin, credential: token });
 }
 
-export type CaptureStatus = Exclude<PublicCaptureStatus, 'disabled'>;
+/**
+ * わんコメの枠の視聴URLから、Misskeyのチャンネルページ（`{origin}/channels/{channelId}`）のチャンネルIDを取り出す。
+ * ログイン中のサーバー以外のURLや、チャンネルページ以外のURLの場合は null を返す。
+ */
+export function parseChannelUrl(url: string, origin: string): string | null {
+    let parsed: URL;
+    try {
+        parsed = new URL(url.trim());
+    } catch {
+        return null;
+    }
+    if (parsed.origin !== origin) return null;
+    const match = parsed.pathname.match(/^\/channels\/([a-zA-Z0-9]+)\/?$/);
+    return match?.[1] ?? null;
+}
+
+export type StreamStatus = Exclude<LinkStatus, 'off'>;
 
 /** `/emoji/` ルートが受け付ける名前（Misskey backend の ServerService を参照） */
 const EMOJI_ROUTE_SAFE = /^[a-zA-Z0-9\-_.]+$/;
@@ -68,16 +83,17 @@ const EMOJI_LIST_REFRESH_INTERVAL = 60 * 1000;
 const HEARTBEAT_INTERVAL = 60 * 1000;
 
 /**
- * 指定したチャンネルの新規ノートをストリーミングで受け取る
+ * Misskeyのストリーミング接続（1本）を保持し、複数のチャンネルを購読する
  */
-export class ChannelCapture {
-    private readonly origin: string;
+export class MisskeyStream {
+    public readonly origin: string;
     private readonly token: string;
-    private readonly channelId: string;
-    private readonly onNote: (note: entities.Note) => Promise<void>;
+    private readonly onNote: (note: entities.Note, channelId: string) => Promise<void>;
+    private readonly onStatusChange: (status: StreamStatus) => void;
 
     private stream: Stream | null = null;
-    private connection: IChannelConnection<Channels['channel']> | null = null;
+    /** チャンネルID → チャンネルの購読 */
+    private readonly connections = new Map<string, IChannelConnection<Channels['channel']>>();
     private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
     /** ノートを受信順に処理するためのキュー */
     private queue: Promise<void> = Promise.resolve();
@@ -87,18 +103,18 @@ export class ChannelCapture {
     private localEmojisFetchedAt = 0;
     private localEmojisFetching: Promise<void> | null = null;
 
-    public status: CaptureStatus = 'connecting';
+    public status: StreamStatus = 'connecting';
 
     constructor(opts: {
         origin: string;
         token: string;
-        channelId: string;
-        onNote: (note: entities.Note) => Promise<void>;
+        onNote: (note: entities.Note, channelId: string) => Promise<void>;
+        onStatusChange: (status: StreamStatus) => void;
     }) {
         this.origin = opts.origin;
         this.token = opts.token;
-        this.channelId = opts.channelId;
         this.onNote = opts.onNote;
+        this.onStatusChange = opts.onStatusChange;
     }
 
     public start() {
@@ -107,22 +123,12 @@ export class ChannelCapture {
 
         this.stream = new Stream(this.origin, { token: this.token }, { WebSocket });
         this.stream.on('_connected_', () => {
-            this.status = 'connected';
-            console.info(`[misskey] connected to ${this.origin} (channel: ${this.channelId})`);
+            console.info(`[misskey] connected to ${this.origin}`);
+            this.setStatus('connected');
         });
         this.stream.on('_disconnected_', () => {
-            this.status = 'reconnecting';
             console.info(`[misskey] disconnected from ${this.origin}, reconnecting...`);
-        });
-
-        // 接続前に呼んでも送信はキューイングされ、再接続時にも自動で再購読される
-        this.connection = this.stream.useChannel('channel', { channelId: this.channelId });
-        this.connection.on('note', (note) => {
-            this.queue = this.queue
-                .then(() => this.onNote(note))
-                .catch((err) => {
-                    console.error('[misskey] failed to handle note', err);
-                });
+            this.setStatus('reconnecting');
         });
 
         this.heartbeatTimer = setInterval(() => {
@@ -137,10 +143,46 @@ export class ChannelCapture {
             clearInterval(this.heartbeatTimer);
             this.heartbeatTimer = null;
         }
-        this.connection?.dispose();
-        this.connection = null;
+        for (const connection of this.connections.values()) {
+            connection.dispose();
+        }
+        this.connections.clear();
         this.stream?.close();
         this.stream = null;
+    }
+
+    /** 購読するチャンネルを指定した集合に合わせる（増えたものは購読し、減ったものは購読を解除する） */
+    public setChannels(channelIds: ReadonlySet<string>) {
+        const stream = this.stream;
+        if (stream == null) return;
+
+        for (const [channelId, connection] of this.connections) {
+            if (channelIds.has(channelId)) continue;
+            connection.dispose();
+            this.connections.delete(channelId);
+            console.info(`[misskey] unsubscribed channel ${channelId}`);
+        }
+
+        for (const channelId of channelIds) {
+            if (this.connections.has(channelId)) continue;
+            // 接続前に呼んでも送信はキューイングされ、再接続時にも自動で再購読される
+            const connection = stream.useChannel('channel', { channelId });
+            connection.on('note', (note) => {
+                this.queue = this.queue
+                    .then(() => this.onNote(note, channelId))
+                    .catch((err) => {
+                        console.error('[misskey] failed to handle note', err);
+                    });
+            });
+            this.connections.set(channelId, connection);
+            console.info(`[misskey] subscribed channel ${channelId}`);
+        }
+    }
+
+    private setStatus(status: StreamStatus) {
+        if (this.status === status) return;
+        this.status = status;
+        this.onStatusChange(status);
     }
 
     private refreshLocalEmojis(): Promise<void> {

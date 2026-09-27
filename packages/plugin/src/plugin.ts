@@ -1,35 +1,34 @@
 import { randomUUID } from 'node:crypto';
 import type { entities } from 'misskey-js';
 import type { PluginRequest } from '@onecomme.com/onesdk/types/Plugin';
-import type { Service } from '@onecomme.com/onesdk/types/Service';
+import type { Service, ServiceMeta } from '@onecomme.com/onesdk/types/Service';
 import type StoreType from 'electron-store';
 
 import { DISPLAY_SETTING_KEYS, PLUGIN_UID } from '@onecomme-misskey/shared';
-import type { CaptureStatus, DisplaySettings, MisskeyUser, PluginGetActions, PluginPostActions, PublicState } from '@onecomme-misskey/shared';
+import type { ChannelLink, DisplaySettings, MisskeyUser, PluginGetActions, PluginPostActions, PublicState } from '@onecomme-misskey/shared';
 
 import { defineOnecommePlugin } from '@/def.js';
 import type { OnecommePlugin } from '@/def.js';
-import { ChannelCapture, buildMiAuthUrl, checkMiAuth, createApiClient, normalizeOrigin } from '@/misskey.js';
+import { MisskeyStream, buildMiAuthUrl, checkMiAuth, createApiClient, normalizeOrigin, parseChannelUrl } from '@/misskey.js';
 import { noteToComment } from '@/note.js';
-import { createService, getServices, sendComment } from '@/onecomme.js';
+import { getServices, sendComment, updateServiceMeta } from '@/onecomme.js';
 
 /** 設定画面（Viteでビルドした `dist/ui`） */
 const SETTINGS_PAGE_URL = `http://localhost:11180/plugins/${PLUGIN_UID}/ui/index.html`;
 const MIAUTH_APP_NAME = 'わんコメ Misskey連携';
-const DEFAULT_SERVICE_NAME = 'Misskey';
 /** MiAuthの認可を確認する間隔と、諦めるまでの時間 */
 const MIAUTH_CHECK_INTERVAL = 2000;
 const MIAUTH_TIMEOUT = 10 * 60 * 1000;
+/**
+ * 枠の一覧を確認する間隔。
+ * 枠の削除はプラグインに通知されないため、定期的に取得して追従する
+ */
+const SERVICES_POLL_INTERVAL = 10 * 1000;
 
 const defaultState = {
     misskeyHost: null as string | null,
     misskeyToken: null as string | null,
     misskeyUser: null as MisskeyUser | null,
-    enableCapture: false,
-    captureChannelId: null as string | null,
-    captureChannelName: null as string | null,
-    /** コメントを流す わんコメの枠のID */
-    onecommeServiceId: null as string | null,
     //#region 表示設定・defaults は浅くマージされるため、設定はフラットなキーで持つこと
     showRoleBadges: false,
     includeReplies: false,
@@ -45,6 +44,12 @@ type GetHandlers = {
 /** POSTのbodyはプラグイン側で検証するため、ハンドラーには未検証の値を渡す */
 type PostHandlers = {
     [K in keyof PluginPostActions]: (body: Record<string, unknown>) => Promise<PluginPostActions[K]['response']>;
+};
+
+/** 視聴URLにチャンネルのURLが設定されている枠 */
+type ResolvedLink = {
+    service: Service;
+    channelId: string;
 };
 
 class HttpError extends Error {
@@ -77,13 +82,29 @@ function getString(body: Record<string, unknown>, key: string): string {
     return value.trim();
 }
 
+/** 連携の判定に使う項目だけを比較する */
+function servicesSignature(services: Service[]): string {
+    return JSON.stringify(services.map((s) => [s.id, s.name, s.url, s.enabled]));
+}
+
 export default defineOnecommePlugin(() => {
     let store: StoreType<State> | null = null;
-    let capture: ChannelCapture | null = null;
-    /** 現在の接続先（設定が変わったときだけ張り直すため） */
-    let captureKey: string | null = null;
-    /** わんコメの枠ごとの「接続」スイッチの状態 */
-    const serviceEnabled = new Map<string, boolean>();
+    /** わんコメの枠の一覧 */
+    let services: Service[] = [];
+    let servicesPollTimer: ReturnType<typeof setInterval> | null = null;
+
+    /** Misskeyのストリーミング接続（連携中のチャンネルが1つもなければ null） */
+    let stream: MisskeyStream | null = null;
+    /** 現在の接続先（サーバーかトークンが変わったときだけ張り直すため） */
+    let streamKey: string | null = null;
+
+    /** チャンネルID → チャンネル名 */
+    const channelNames = new Map<string, string>();
+    let channelNamesOrigin: string | null = null;
+    const channelNamesFetching = new Set<string>();
+    /** 枠ID → 最後に反映した配信情報（同じ内容で何度も更新しないため） */
+    const appliedMeta = new Map<string, string>();
+
     /** 進行中のMiAuthセッション */
     let pendingMiAuth: { origin: string; session: string; timer: ReturnType<typeof setInterval> } | null = null;
 
@@ -92,18 +113,37 @@ export default defineOnecommePlugin(() => {
         return store;
     }
 
+    function getCredential(): { origin: string; token: string } | null {
+        const s = getStore();
+        const origin = s.get('misskeyHost');
+        const token = s.get('misskeyToken');
+        return origin != null && token != null ? { origin, token } : null;
+    }
+
+    /** 視聴URLにログイン中のサーバーのチャンネルのURLが設定されている枠 */
+    function getLinks(): ResolvedLink[] {
+        const credential = getCredential();
+        if (credential == null) return [];
+        return services.flatMap((service) => {
+            const channelId = parseChannelUrl(service.url ?? '', credential.origin);
+            return channelId != null ? [{ service, channelId }] : [];
+        });
+    }
+
     function getPublicState(): PublicState {
         const s = getStore();
         return {
-            loggedIn: s.get('misskeyHost') != null && s.get('misskeyToken') != null,
+            loggedIn: getCredential() != null,
             miauthPending: pendingMiAuth != null,
             misskeyHost: s.get('misskeyHost'),
             misskeyUser: s.get('misskeyUser'),
-            enableCapture: s.get('enableCapture'),
-            captureChannelId: s.get('captureChannelId'),
-            captureChannelName: s.get('captureChannelName'),
-            onecommeServiceId: s.get('onecommeServiceId'),
-            captureStatus: getCaptureStatus(),
+            links: getLinks().map(({ service, channelId }): ChannelLink => ({
+                serviceId: service.id,
+                serviceName: service.name,
+                channelId,
+                channelName: channelNames.get(channelId) ?? null,
+                status: service.enabled ? (stream?.status ?? 'connecting') : 'off',
+            })),
             display: {
                 showRoleBadges: s.get('showRoleBadges'),
                 includeReplies: s.get('includeReplies'),
@@ -111,57 +151,132 @@ export default defineOnecommePlugin(() => {
         };
     }
 
-    function getCaptureStatus(): CaptureStatus {
-        if (!getStore().get('enableCapture')) return 'disabled';
-        if (!isTargetServiceEnabled()) return 'serviceDisconnected';
-        return capture?.status ?? 'disabled';
+    function updateServices(next: Service[]) {
+        services = next;
+        sync();
     }
 
-    /** コメントを流す枠の「接続」がオンになっているか */
-    function isTargetServiceEnabled(): boolean {
-        const serviceId = getStore().get('onecommeServiceId');
-        return serviceId != null && serviceEnabled.get(serviceId) === true;
+    /**
+     * 枠の状態に合わせて、チャンネルの購読とストリーミング接続を張る・切る。
+     * - 「接続」がオンの枠のチャンネルだけを購読する
+     * - 購読するチャンネルが1つもなくなったら、ストリーミング接続自体を切る
+     */
+    function sync() {
+        if (store == null) return;
+        const credential = getCredential();
+        const links = getLinks();
+        const channelIds = new Set(links.filter((link) => link.service.enabled).map((link) => link.channelId));
+
+        const key = credential != null && channelIds.size > 0 ? JSON.stringify([credential.origin, credential.token]) : null;
+        if (key !== streamKey) {
+            stream?.stop();
+            stream = null;
+            streamKey = key;
+            appliedMeta.clear();
+            if (credential != null && key != null) {
+                const newStream: MisskeyStream = new MisskeyStream({
+                    origin: credential.origin,
+                    token: credential.token,
+                    onNote: (note, channelId) => handleNote(note, channelId, newStream),
+                    onStatusChange: () => syncServiceMeta(),
+                });
+                newStream.start();
+                stream = newStream;
+            }
+        }
+        stream?.setChannels(channelIds);
+
+        fetchChannelNames(links);
+        syncServiceMeta();
     }
 
-    function updateServices(services: Service[]) {
-        serviceEnabled.clear();
-        for (const service of services) {
-            serviceEnabled.set(service.id, service.enabled);
+    /** 表示用にチャンネル名を取得する（チャンネルの情報は認証なしで取得できる） */
+    function fetchChannelNames(links: ResolvedLink[]) {
+        const origin = getCredential()?.origin ?? null;
+        if (origin !== channelNamesOrigin) {
+            channelNames.clear();
+            channelNamesOrigin = origin;
+        }
+        if (origin == null) return;
+
+        for (const { channelId } of links) {
+            if (channelNames.has(channelId) || channelNamesFetching.has(channelId)) continue;
+            channelNamesFetching.add(channelId);
+            createApiClient(origin, null).request('channels/show', { channelId })
+                .then((channel) => {
+                    if (channelNamesOrigin !== origin) return;
+                    channelNames.set(channelId, channel.name);
+                    syncServiceMeta();
+                })
+                .catch((err) => {
+                    console.error(`[misskey] failed to fetch channel ${channelId}`, err);
+                })
+                .finally(() => {
+                    channelNamesFetching.delete(channelId);
+                });
         }
     }
 
-    /** 保存されている枠が存在しなければ、新しく「Misskey」枠を作成する */
-    async function ensureService(): Promise<string> {
-        const s = getStore();
-        const serviceId = s.get('onecommeServiceId');
-        const services = await getServices();
-        updateServices(services);
-        if (serviceId != null && services.some((service) => service.id === serviceId)) {
-            return serviceId;
+    /** 連携中の枠の配信情報（タイトル・接続中の表示）を、チャンネルとストリーミングの状態に合わせる */
+    function syncServiceMeta() {
+        if (stream == null) return;
+        const status = stream.status;
+        const activeIds = new Set<string>();
+
+        for (const { service, channelId } of getLinks()) {
+            if (!service.enabled) continue;
+            activeIds.add(service.id);
+
+            const meta: ServiceMeta = {
+                isConnecting: status === 'connecting',
+                isReconnecting: status === 'reconnecting',
+            };
+            const channelName = channelNames.get(channelId);
+            if (channelName != null) meta.title = channelName;
+
+            const signature = JSON.stringify(meta);
+            if (appliedMeta.get(service.id) === signature) continue;
+            appliedMeta.set(service.id, signature);
+            updateServiceMeta(service.id, meta).catch((err) => {
+                appliedMeta.delete(service.id);
+                console.error(`[onecomme] failed to update meta of ${service.id}`, err);
+            });
         }
-        const created = await createService(DEFAULT_SERVICE_NAME);
-        serviceEnabled.set(created.id, created.enabled);
-        s.set('onecommeServiceId', created.id);
-        console.info(`[onecomme] created service "${created.name}" (${created.id})`);
-        return created.id;
+
+        // 接続がオフになった枠は、再びオンになったときに改めて反映する
+        for (const serviceId of appliedMeta.keys()) {
+            if (!activeIds.has(serviceId)) appliedMeta.delete(serviceId);
+        }
     }
 
-    async function handleNote(note: entities.Note, source: ChannelCapture) {
+    async function pollServices() {
+        try {
+            const latest = await getServices();
+            if (servicesSignature(latest) !== servicesSignature(services)) {
+                updateServices(latest);
+            }
+        } catch {
+            // わんコメの起動直後などは失敗することがある。次回の確認で再試行する
+        }
+    }
+
+    async function handleNote(note: entities.Note, channelId: string, source: MisskeyStream) {
         const s = getStore();
-        const serviceId = s.get('onecommeServiceId');
-        // 切断処理と行き違いで届いたノートは捨てる
-        if (serviceId == null || !isTargetServiceEnabled()) return;
         if (note.replyId != null && !s.get('includeReplies')) return;
 
-        const body = noteToComment(note, {
-            serviceId,
-            myUserId: s.get('misskeyUser')?.id ?? null,
-            resolveEmoji: (name, host, remoteEmojis) => source.resolveEmoji(name, host, remoteEmojis),
-            showRoleBadges: s.get('showRoleBadges'),
-        });
-        if (body == null) return;
-
-        await sendComment(body);
+        // 「接続」がオンの、このチャンネルを設定している枠すべてに追加する
+        // （切断処理と行き違いで届いたノートは、対象の枠がないので捨てられる）
+        const targets = getLinks().filter((link) => link.service.enabled && link.channelId === channelId);
+        for (const { service } of targets) {
+            const body = noteToComment(note, {
+                serviceId: service.id,
+                myUserId: s.get('misskeyUser')?.id ?? null,
+                resolveEmoji: (name, host, remoteEmojis) => source.resolveEmoji(name, host, remoteEmojis),
+                showRoleBadges: s.get('showRoleBadges'),
+            });
+            if (body == null) return;
+            await sendComment(body);
+        }
     }
 
     function cancelMiAuth() {
@@ -211,7 +326,6 @@ export default defineOnecommePlugin(() => {
 
     function saveLogin(origin: string, token: string, user: entities.UserDetailedNotMe) {
         const s = getStore();
-        const prevOrigin = s.get('misskeyHost');
         s.set('misskeyHost', origin);
         s.set('misskeyToken', token);
         s.set('misskeyUser', {
@@ -220,76 +334,11 @@ export default defineOnecommePlugin(() => {
             name: user.name,
             avatarUrl: user.avatarUrl,
         });
-        if (prevOrigin !== origin) {
-            // 別サーバーに切り替えた場合、チャンネルの選択は引き継げない
-            s.set('enableCapture', false);
-            s.set('captureChannelId', null);
-            s.set('captureChannelName', null);
-        }
-        applyCapture();
-    }
-
-    /**
-     * 現在の設定に合わせてストリーミング接続を張る・切る。
-     * わんコメ側で枠の「接続」がオフの間は、Misskeyへの接続自体を切っておく。
-     */
-    function applyCapture() {
-        const s = getStore();
-        const origin = s.get('misskeyHost');
-        const token = s.get('misskeyToken');
-        const channelId = s.get('captureChannelId');
-        const shouldConnect = s.get('enableCapture') && isTargetServiceEnabled()
-            && origin != null && token != null && channelId != null;
-        const key = shouldConnect ? JSON.stringify([origin, token, channelId]) : null;
-
-        // 接続先が変わっていなければ張り直さない
-        if (key === captureKey) return;
-
-        capture?.stop();
-        capture = null;
-        captureKey = key;
-        if (!shouldConnect) return;
-
-        const newCapture: ChannelCapture = new ChannelCapture({
-            origin,
-            token,
-            channelId,
-            onNote: (note) => handleNote(note, newCapture),
-        });
-        newCapture.start();
-        capture = newCapture;
-    }
-
-    function getCredential(): { origin: string; token: string } {
-        const s = getStore();
-        const origin = s.get('misskeyHost');
-        const token = s.get('misskeyToken');
-        if (origin == null || token == null) throw new HttpError(401, 'Misskeyにログインしていません');
-        return { origin, token };
+        sync();
     }
 
     const getHandlers: GetHandlers = {
         state: async () => getPublicState(),
-
-        channels: async () => {
-            const { origin, token } = getCredential();
-            const channels = await createApiClient(origin, token).request('channels/my-favorites', {});
-            return channels.map((channel) => ({
-                id: channel.id,
-                name: channel.name,
-                description: channel.description,
-                bannerUrl: channel.bannerUrl,
-                color: channel.color,
-                isArchived: channel.isArchived,
-                notesCount: channel.notesCount,
-                usersCount: channel.usersCount,
-            }));
-        },
-
-        services: async () => {
-            const services = await getServices();
-            return services.map((service) => ({ id: service.id, name: service.name }));
-        },
     };
 
     const postHandlers: PostHandlers = {
@@ -320,48 +369,7 @@ export default defineOnecommePlugin(() => {
             const s = getStore();
             s.set('misskeyToken', null);
             s.set('misskeyUser', null);
-            s.set('enableCapture', false);
-            applyCapture();
-            return getPublicState();
-        },
-
-        settings: async (body) => {
-            const s = getStore();
-            const { origin, token } = getCredential();
-
-            if ('onecommeServiceId' in body) {
-                const serviceId = body['onecommeServiceId'];
-                if (serviceId !== null && typeof serviceId !== 'string') throw new HttpError(400, '枠の指定が正しくありません');
-                s.set('onecommeServiceId', serviceId);
-            }
-
-            if ('captureChannelId' in body) {
-                const channelId = body['captureChannelId'];
-                if (channelId === null) {
-                    s.set('captureChannelId', null);
-                    s.set('captureChannelName', null);
-                } else if (typeof channelId === 'string') {
-                    const channel = await createApiClient(origin, token).request('channels/show', { channelId });
-                    s.set('captureChannelId', channel.id);
-                    s.set('captureChannelName', channel.name);
-                } else {
-                    throw new HttpError(400, 'チャンネルの指定が正しくありません');
-                }
-            }
-
-            if ('enableCapture' in body) {
-                s.set('enableCapture', body['enableCapture'] === true);
-            }
-
-            if (s.get('enableCapture')) {
-                if (s.get('captureChannelId') == null) {
-                    s.set('enableCapture', false);
-                    throw new HttpError(400, 'コメント一覧に流すチャンネルを選択してください');
-                }
-                await ensureService();
-            }
-
-            applyCapture();
+            sync();
             return getPublicState();
         },
 
@@ -408,6 +416,7 @@ export default defineOnecommePlugin(() => {
         version: _VERSION_,
         author: 'kakkokari-gtyih',
         url: SETTINGS_PAGE_URL,
+        // 枠の視聴URL・「接続」スイッチの状態を受け取るため
         permissions: ['services'],
         defaultState,
         //#endregion
@@ -415,13 +424,12 @@ export default defineOnecommePlugin(() => {
         init: (api, initialData) => {
             store = api.store;
             updateServices(initialData.services ?? []);
-            applyCapture();
+            servicesPollTimer = setInterval(pollServices, SERVICES_POLL_INTERVAL);
         },
 
         subscribe: (type, ...args) => {
             if (type !== 'services' || store == null) return;
             updateServices(args[0] as Service[]);
-            applyCapture();
         },
 
         request: async (req) => {
@@ -448,9 +456,14 @@ export default defineOnecommePlugin(() => {
 
         destroy: () => {
             cancelMiAuth();
-            capture?.stop();
-            capture = null;
-            captureKey = null;
+            if (servicesPollTimer != null) {
+                clearInterval(servicesPollTimer);
+                servicesPollTimer = null;
+            }
+            stream?.stop();
+            stream = null;
+            streamKey = null;
+            appliedMeta.clear();
         },
     };
 
