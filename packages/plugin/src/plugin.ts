@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { entities } from 'misskey-js';
+import type { Config } from '@onecomme.com/onesdk/types/Config';
 import type { PluginRequest } from '@onecomme.com/onesdk/types/Plugin';
 import type { Service, ServiceMeta } from '@onecomme.com/onesdk/types/Service';
 import type StoreType from 'electron-store';
@@ -11,7 +12,7 @@ import { defineOnecommePlugin } from '@/def.js';
 import type { OnecommePlugin } from '@/def.js';
 import { MisskeyStream, buildMiAuthUrl, checkMiAuth, createApiClient, normalizeOrigin, parseChannelUrl } from '@/misskey.js';
 import { noteToComment } from '@/note.js';
-import { getServices, sendComment, updateServiceMeta } from '@/onecomme.js';
+import { getServices, sendComment, sendSystemComment, updateServiceMeta } from '@/onecomme.js';
 
 /** 設定画面（Viteでビルドした `dist/ui`） */
 const SETTINGS_PAGE_URL = `http://localhost:11180/plugins/${PLUGIN_UID}/ui/index.html`;
@@ -104,6 +105,10 @@ export default defineOnecommePlugin(() => {
     const channelNamesFetching = new Set<string>();
     /** 枠ID → 最後に反映した配信情報（同じ内容で何度も更新しないため） */
     const appliedMeta = new Map<string, string>();
+    /** 枠ID → 最後にシステムメッセージで通知した接続状態 */
+    const announced = new Map<string, 'connected' | 'reconnecting'>();
+    /** わんコメの設定「システムメッセージを読み上げる」 */
+    let speechSystemMessage = false;
 
     /** 進行中のMiAuthセッション */
     let pendingMiAuth: { origin: string; session: string; timer: ReturnType<typeof setInterval> } | null = null;
@@ -173,12 +178,16 @@ export default defineOnecommePlugin(() => {
             stream = null;
             streamKey = key;
             appliedMeta.clear();
+            announced.clear();
             if (credential != null && key != null) {
                 const newStream: MisskeyStream = new MisskeyStream({
                     origin: credential.origin,
                     token: credential.token,
                     onNote: (note, channelId) => handleNote(note, channelId, newStream),
-                    onStatusChange: () => syncServiceMeta(),
+                    onStatusChange: () => {
+                        syncServiceMeta();
+                        syncConnectionMessages();
+                    },
                 });
                 newStream.start();
                 stream = newStream;
@@ -188,6 +197,7 @@ export default defineOnecommePlugin(() => {
 
         fetchChannelNames(links);
         syncServiceMeta();
+        syncConnectionMessages();
     }
 
     /** 表示用にチャンネル名を取得する（チャンネルの情報は認証なしで取得できる） */
@@ -247,6 +257,40 @@ export default defineOnecommePlugin(() => {
         for (const serviceId of appliedMeta.keys()) {
             if (!activeIds.has(serviceId)) appliedMeta.delete(serviceId);
         }
+    }
+
+    /**
+     * 連携中の枠に「接続しました」「再接続中」のシステムメッセージを出す
+     */
+    function syncConnectionMessages() {
+        const activeLinks = getLinks().filter((link) => link.service.enabled);
+        const activeIds = new Set(activeLinks.map((link) => link.service.id));
+        for (const serviceId of announced.keys()) {
+            if (!activeIds.has(serviceId)) announced.delete(serviceId);
+        }
+
+        const status = stream?.status;
+        if (status == null) {
+            announced.clear();
+            return;
+        }
+
+        for (const { service } of activeLinks) {
+            const prev = announced.get(service.id);
+            if (status === 'connected' && prev !== 'connected') {
+                announced.set(service.id, 'connected');
+                sendSystemComment(service.id, { type: 'info', message: `接続しました - ${service.name}` }, { speech: speechSystemMessage })
+                    .catch((err) => console.error(`[onecomme] failed to send system comment to ${service.id}`, err));
+            } else if (status === 'reconnecting' && prev === 'connected') {
+                announced.set(service.id, 'reconnecting');
+                sendSystemComment(service.id, { type: 'warning', message: `再接続中 - ${service.name}` }, { speech: speechSystemMessage, sound: false })
+                    .catch((err) => console.error(`[onecomme] failed to send system comment to ${service.id}`, err));
+            }
+        }
+    }
+
+    function updateConfig(config: Partial<Config> | undefined) {
+        speechSystemMessage = config?.speech?.speechSystemMessage === true;
     }
 
     async function pollServices() {
@@ -416,20 +460,31 @@ export default defineOnecommePlugin(() => {
         version: _VERSION_,
         author: 'kakkokari-gtyih',
         url: SETTINGS_PAGE_URL,
-        // 枠の視聴URL・「接続」スイッチの状態を受け取るため
-        permissions: ['services'],
+        // services: 枠の視聴URL・「接続」スイッチの状態を受け取るため
+        // config: システムメッセージの読み上げ設定を受け取るため
+        permissions: ['services', 'config'],
         defaultState,
         //#endregion
 
         init: (api, initialData) => {
             store = api.store;
+            updateConfig(initialData.config);
             updateServices(initialData.services ?? []);
             servicesPollTimer = setInterval(pollServices, SERVICES_POLL_INTERVAL);
         },
 
         subscribe: (type, ...args) => {
-            if (type !== 'services' || store == null) return;
-            updateServices(args[0] as Service[]);
+            if (store == null) return;
+            switch (type) {
+                case 'services': {
+                    updateServices(args[0] as Service[]);
+                    break;
+                }
+                case 'config': {
+                    updateConfig(args[0] as Config);
+                    break;
+                }
+            }
         },
 
         request: async (req) => {
@@ -464,6 +519,7 @@ export default defineOnecommePlugin(() => {
             stream = null;
             streamKey = null;
             appliedMeta.clear();
+            announced.clear();
         },
     };
 

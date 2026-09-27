@@ -1,4 +1,5 @@
 import type { Service, ServiceMeta } from '@onecomme.com/onesdk/types/Service';
+import type { SystemCommentOptions, SystemMessage } from '@onecomme.com/onesdk/types/System';
 
 import type { SendCommentRequest } from '@/types/onecomme.js';
 
@@ -37,4 +38,8 @@ export async function updateServiceMeta(serviceId: string, meta: ServiceMeta): P
 
 export async function sendComment(body: SendCommentRequest): Promise<void> {
     await request('/comments', { method: 'POST', body });
+}
+
+export async function sendSystemComment(serviceId: string, data: SystemMessage, options: Omit<SystemCommentOptions, 'type'> = {}): Promise<void> {
+    await request('/comments/system', { method: 'POST', body: { serviceId, data, options } });
 }
