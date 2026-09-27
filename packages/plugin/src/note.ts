@@ -97,7 +97,10 @@ function toPlainText(input: string): string {
 
 export function getUserDisplayName(user: entities.UserLite): string {
     if (user.name != null && user.name.trim() !== '') {
-        return toPlainText(user.name);
+        const plainTextName = toPlainText(user.name);
+        if (plainTextName.trim() !== '') {
+            return plainTextName;
+        }
     }
     return getUserAcct(user);
 }
