@@ -3,7 +3,7 @@
  * プラグイン（Node）と設定画面（Vue）の両方から参照するため、副作用のあるコードは置かない。
  */
 
-export const PLUGIN_UID = 'net.misskey-hub.onecomme';
+export const PLUGIN_UID = 'app.sekigae.mk.onecomme';
 
 export type MisskeyUser = {
     id: string;
