@@ -2,6 +2,8 @@
 
 わんコメで、Misskeyの特定のチャンネルのノートをコメントとして表示するプラグインです。
 
+![Misskeyプラグイン for わんコメ](./readme-assets/readme_img.png)
+
 ## 使い方
 
 1. [リリースページ](https://github.com/kakkokari-gtyih/onecomme-misskey-plugin/releases) の最新のリリースを開き、Assets と書かれているところに添付されているZIPファイルをダウンロードします
