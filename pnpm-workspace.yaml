@@ -4,4 +4,8 @@ packages:
 allowBuilds:
   '@onecomme.com/onesdk': false
 
+minimumReleaseAgeExclude:
+  - '@misskey-dev/*'
+  - mfm-js
+
 saveExact: true
