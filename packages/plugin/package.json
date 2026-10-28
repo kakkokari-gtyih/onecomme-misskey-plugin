@@ -8,13 +8,13 @@
   },
   "devDependencies": {
     "@onecomme-misskey/shared": "workspace:*",
-    "@onecomme.com/onesdk": "9.0.0-alpha.1",
+    "@onecomme.com/onesdk": "9.2.0-beta.1",
     "@types/node": "26.6.5",
     "@types/ws": "8.18.2",
     "electron-store": "12.0.0",
-    "mfm-js": "0.27.0",
-    "misskey-js": "2026.10.1-alpha.0",
-    "tsdown": "0.23.1",
+    "mfm-js": "0.28.0",
+    "misskey-js": "2026.10.1",
+    "tsdown": "0.23.2",
     "ws": "8.22.0"
   }
 }
